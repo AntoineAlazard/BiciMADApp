@@ -1,0 +1,349 @@
+
+# Useful packages
+
+rm(list=ls())
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(readr)
+library(readxl)
+library(jsonlite)
+library(gridExtra)
+
+#working directory
+setwd("C:/Users/aalaz/Desktop/Internship_data/JSON_data")
+
+##########################################
+
+# Program to download the BiciMAD station database and all the BiciMAD users database
+
+out <- lapply(readLines("Bicimad_Stations_201906.json"), fromJSON)
+aux1 <- lapply(out,data.frame,stringsAsFactors=FALSE)
+aux2 <- lapply(aux1, function(x) x[match(names(aux1[[1]]), names(x))])
+data <-  do.call(rbind.data.frame,aux2)
+
+
+# Database for spatial representation
+
+## Find the most recent data
+
+tail(data$X_id,184)
+
+## data treatment
+
+bicimad_stations<-data%>%
+  select(stations.address, stations.id, stations.number, stations.name, stations.total_bases, stations.latitude ,stations.longitude)%>%
+  rename(address=stations.address, id=stations.id, number=stations.number,
+         name=stations.name, total_bases=stations.total_bases,
+         latitude=stations.latitude, longitude=stations.longitude)%>%
+  slice(123858:124041)
+
+## save the data before Qgis merge
+write.csv(bicimad_stations, file="bicimad_stations.csv")
+str(bicimad_stations)
+
+## read the data after the Qgis transformation
+stations_localisation<-read.csv("stationsloc.csv")%>%
+  select(-CODDISTRIT,-SHAPE_area,-SHAPE_len)%>%
+  rename(neighbours=NOMBRE, address=adress)%>%
+  arrange(id)
+
+## Save the data
+write.csv(stations_localisation, file = "C:/Users/aalaz/Desktop/Internship_data/database_created/stations_localisation.csv")
+stations_localisation<-read.csv("C:/Users/aalaz/Desktop/Internship_data/database_created/stations_localisation.csv")
+
+
+# Bicycle use datebase (behavioural database)
+
+## download the data (they were already preparated with the same code to extract JSON file)
+june2019<-read.csv("june2019.csv")
+april2019<-read.csv("april2019.csv")
+march2019<-read.csv("march2019.csv")
+feb2019<-read.csv("feb2019.csv")
+dec2018<-read.csv("dec2018.csv")
+
+## select useful variables
+data1<-june2019 %>%
+  select(X,user_type,idplug_station, idunplug_station,unplug_hourTime, travel_time, ageRange)
+data2<-april2019 %>%
+  select(X,user_type,idplug_station, idunplug_station,unplug_hourTime, travel_time, ageRange)
+data3<-march2019 %>%
+  select(X,user_type,idplug_station, idunplug_station,unplug_hourTime, travel_time, ageRange)
+data4<-feb2019 %>%
+  select(X,user_type,idplug_station, idunplug_station,unplug_hourTime, travel_time, ageRange)
+data5<-dec2018 %>%
+  select(X,user_type,idplug_station, idunplug_station,unplug_hourTime, travel_time, ageRange)
+
+## merge per rows
+data<-bind_rows(data1, data2, data3, data4, data5)
+
+## Thanks to the variable unplug_hourTime, it's possible to create hourly data
+## hours column
+Hours<- format(as.POSIXct(strptime(data$unplug_hourTime,"%Y-%m-%d %H:%M:%S")) ,format = "%H:%M:%S")
+## date column
+Dates<- format(as.POSIXct(strptime(data$unplug_hourTime,"%Y-%m-%d %H:%M:%S")) ,format = "%Y-%m-%d")
+## just  hours
+hour<-substr(Hours, start = 1, stop = 2)
+
+## merge with the main base
+data$Dates<-Dates
+data$Hours<-Hours
+data$hour<-hour
+
+## define the levels of the factor, else the factor will be not in the right order while plotting
+## It will be useful later
+
+data<-data %>%
+  mutate(date=ymd(Dates),
+         weekday= weekdays(date),
+         weekday = factor(weekday, levels = c("lundi", "mardi",
+                                              "mercredi", "jeudi",
+                                              "vendredi", "samedi",
+                                              "dimanche")),
+         month=months(date),
+         month = factor(month, levels = c("janvier", "f�vrier", "mars",
+                                          "avril", "mai", "juin",
+                                          "juillet", "ao�t",
+                                          "septembre", "octobre", "novembre",
+                                          "d�cembre")),
+         day=day(date)) 
+
+## quick analysis 
+summary(data)
+str(data)
+levels(data$user_type)
+levels(data$month)
+
+## delete station 2008 and data from january
+data<-data %>%
+  filter(idplug_station!=2008 & idunplug_station!=2008 & month!="janvier")
+
+## save the data 
+data<-data%>%
+  select(-X,-unplug_hourTime,-Dates,-date,-Hours)
+
+write.csv(data, file="C:/Users/aalaz/Desktop/Internship_data/database_created/bicimad_users.csv")
+
+
+# creation of departure and arrival for each station
+
+departure1<-data%>%
+  filter(user_type==1)%>%
+  count(idunplug_station)%>%
+  arrange(desc(n))%>%
+  rename(id=idunplug_station,
+         departure1=n)
+arrival1<-data%>%
+  filter(user_type==1)%>%
+  count(idplug_station)%>%
+  arrange(desc(n))%>%
+  rename(id=idplug_station,
+         arrival1=n)
+departure2<-data%>%
+  filter(user_type==2)%>%
+  count(idunplug_station)%>%
+  arrange(desc(n))%>%
+  rename(id=idunplug_station,
+         departure2=n)
+arrival2<-data%>%
+  filter(user_type==2)%>%
+  count(idplug_station)%>%
+  arrange(desc(n))%>%
+  rename(id=idplug_station,
+         arrival2=n)
+departure3<-data%>%
+  filter(user_type==3)%>%
+  count(idunplug_station)%>%
+  arrange(desc(n))%>%
+  rename(id=idunplug_station,
+         departure3=n)
+arrival3<-data%>%
+  filter(user_type==3)%>%
+  count(idplug_station)%>%
+  arrange(desc(n))%>%
+  rename(id=idplug_station,
+         arrival3=n)
+
+traffic_flow<-departure1%>%
+  group_by(id)%>%
+  left_join(arrival1, by="id")%>%
+  left_join(departure2, by="id")%>%
+  left_join(arrival2, by="id")%>%
+  left_join(departure3, by="id")%>%
+  left_join(arrival3, by="id")%>%
+  arrange(id)%>%
+  mutate(total_departure=departure1+departure2,
+         total_arrival=arrival1+arrival2,
+         total_attendance=departure1+departure2+arrival1+arrival2)
+
+#creation of the bicimad_data base
+
+bicimad_data<-traffic_flow%>%
+  group_by(id)%>%
+  left_join(stations_localisation, by="id")
+
+## There are 4 stations missing 23, 24, 179 and 191
+
+setdiff(stations_localisation$id,bicimad_data$id)
+
+#base registration
+
+write.csv(bicimad_data, file="C:/Users/aalaz/Desktop/Internship_data/database_created/bicimad_data.csv")
+
+
+bicimad_data<-read.csv("C:/Users/aalaz/Desktop/Internship_data/database_created/bicimad_data.csv")
+
+# District shapefile mutation
+district<-readOGR("C:/Users/aalaz/Desktop/Internship_data/shapefile/DISTRITOS.shp")
+
+
+xy<- bicimad_data[,c("longitude","latitude")]
+pdf <- SpatialPointsDataFrame(coords = xy, data = bicimad_data,
+                              proj4string = CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+plot(pdf)
+
+district <- spTransform(district,
+                        CRS = proj4string(pdf))
+plot(district)  
+proj4string(district)
+district_df <- fortify(district)
+district@data<-district_df
+head(district@data)
+
+
+############  bicis usuarios abonos base preparation ##############
+
+
+###### it gives us the number of new subscribers each day since 2014
+### goal: have the same data by month and by year
+
+bici_abonos<-read_xls("C:/Users/aalaz/Desktop/Internship_data/membership_data/new_bicis_usuarios.xls",
+                      sheet = "Abono anual activos")
+
+bici_abonos<-bici_abonos %>%
+  select(-c(5,9,10,11,12))
+
+str(bici_abonos)
+head(bici_abonos)
+tail(bici_abonos)
+summary(bici_abonos)
+
+##rename variables
+#### now there is the month and the year of each observations
+bici_abonos2<-bici_abonos %>%
+  mutate(month = months(D�a),
+         month = factor(month, levels = c("janvier", "f�vrier", "mars",
+                                          "avril", "mai", "juin",
+                                          "juillet", "ao�t",
+                                          "septembre", "octobre", "novembre",
+                                          "d�cembre")),
+         year = year(D�a))%>%
+  rename(membership_no_ptc="Altas nuevos usuarios activos ab. anual sin ttp d�a",
+         membership_ptc="Altas nuevos usuarios activos ab. anual con ttp d�a",
+         total_membership="Altas nuevos usuarios activos ab. anual total d�a",
+         accumul_no_ptc="Usuarios activos ab. anual sin ttp acumulado desde inicio",
+         accumul_ptc="Usuarios activos ab. anual con ttp acumulado desde inicio",
+         accumul_total="Usuarios activos ab. anual total acumulado desde inicio")
+
+
+##################### bicis abonos ocasionales ##########################
+
+
+bici_abonos_ocas<-read_xls("C:/Users/aalaz/Desktop/Internship_data/membership_data/new_bicis_usuarios.xls", sheet = "Abono ocasional datos")
+bici_abonos_ocas<-select(bici_abonos_ocas, -c(6,11,12,13,14))
+
+##here, as before, there are the number of subscribers for short-time period day by day 
+##since 23rd of June 2014 until 31 may 2020
+
+head(bici_abonos_ocas)
+tail(bici_abonos_ocas)
+str(bici_abonos_ocas)
+summary(bici_abonos_ocas)
+###we can do the same as before to obtain the sum of that data month by month
+##and year by year
+## Moreover, as there is the same number of observations, it will be possible 
+##to unite those database
+
+##rename variables
+#### now there is the month and the year of each observations
+bici_abonos_ocas2<-bici_abonos_ocas %>%
+  mutate(month = months(D�a),
+         month = factor(month, levels = c("janvier", "f�vrier", "mars",
+                                          "avril", "mai", "juin",
+                                          "juillet", "ao�t",
+                                          "septembre", "octobre", "novembre",
+                                          "d�cembre")),
+         year = year(D�a))%>%
+  rename(membership_1day="Nuevos usuarios abono 1 d�a",
+         membership_3days="Nuevos usuarios abono 3 d�as",
+         membership_5days="Nuevos usuarios abono 5 d�as",
+         membership_occas_total="Nuevos usuarios abono ocas. total",
+         accumul_1day="Usuarios abono 1 d�a acumulado de inicio",
+         accumul_3days="Usuarios abono 3 d�as acumulado de inicio",
+         accumul_5days="Usuarios abono 5 d�as acumulado de inicio",
+         accumul_occas_total="Usuarios abono ocasional total de inicio")
+
+
+#######################DATABASE BICI USOS PER DAY############################
+#total number of daily uses of the bicycle
+
+
+bici_usos<-read_xls("C:/Users/aalaz/Desktop/Internship_data/membership_data/bicis_usos_acumulado.xls")
+
+bici_usos<-select(bici_usos, c(-5,-9,-10,-11,-12))
+
+head(bici_usos)
+tail(bici_usos)
+str(bici_usos)
+
+#now we can make the same transformation  
+
+bici_usos2<-bici_usos %>%
+  mutate(month = months(DIA),
+         month = factor(month, levels = c("janvier", "f�vrier", "mars",
+                                          "avril", "mai", "juin",
+                                          "juillet", "ao�t",
+                                          "septembre", "octobre", "novembre",
+                                          "d�cembre")),
+         weekday= weekdays(DIA),
+         weekday = factor(weekday, levels = c("lundi", "mardi",
+                                              "mercredi", "jeudi",
+                                              "vendredi", "samedi",
+                                              "dimanche")),
+         year = year(DIA))%>%
+  rename(annual_membership_use="Usos bicis abono anual",
+         occas_membership_use="Usos bicis abono ocasional",
+         total_use="Usos bicis total",
+         accumul_annual_membership="Usos abono anual acumulado",
+         accumul_occas_membership="Usos abono ocasional acumulado",
+         accumul_total_use="Usos total acumulado desde inicio")
+
+str(reduce_bici_usos2)
+
+
+###########              Now the objective is to     ########
+###########                 merge the database       ########
+
+str(bici_abonos2)
+str(bici_abonos_ocas2)
+str(bici_usos2)
+
+bici_abonos3<-bici_abonos2%>%
+  rename(DIA="D�a")
+bici_abonos_ocas3<-bici_abonos_ocas2%>%
+  rename(DIA="D�a")
+
+##let's clean the database
+bicimad_abonos<-bici_abonos3%>%
+  left_join(bici_abonos_ocas3, by = "DIA")%>%
+  left_join(bici_usos2, by = "DIA")
+
+bicimad_abonos_final<-bicimad_abonos%>%
+  select(-month.x,-month.y,-year.x,-year.y)
+
+## Create the file
+write.csv(bicimad_abonos_final, file="C:/Users/aalaz/Desktop/Internship_data/database_created/bicimad_abonos.csv")
+
+
+

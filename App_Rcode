@@ -1,0 +1,589 @@
+#libraries
+library(shiny)
+library(leaflet)
+library(rgdal)
+library(shinythemes)
+library(networkD3)
+library(gt)
+library(DT)
+library(dplyr)
+library(lubridate)
+library(scales)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+#setworking directory
+setwd("C:/Users/aalaz/Desktop/shiny_bicimad")
+
+#download the data
+bicimad_data<-read.csv("bicimad_data.csv")
+data<-read.csv("bicimad_users.csv")
+bicimad_abonos<-read.csv("bicimad_abonos.csv")
+
+#preparation of the data
+
+## district mutation
+
+district<-readOGR("DISTRITOS.shp")
+xy<- bicimad_data[,c("longitude","latitude")]
+pdf <- SpatialPointsDataFrame(coords = xy, data = bicimad_data,
+                              proj4string = CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+plot(pdf)
+
+district <- spTransform(district,
+                        CRS = proj4string(pdf))
+plot(district)  
+proj4string(district)
+district_df <- fortify(district)
+district@data<-district_df
+
+
+##awesome icons
+
+icons <- awesomeIcons(
+  library = 'fa',
+  icon = 'bicycle',
+  markerColor = "blue"
+)
+
+## popup
+
+bicimad_data<-bicimad_data %>%
+  mutate(popup = str_c(str_c("Station Id:", `id`, sep = " "),
+                       str_c("Address:", `address`, sep = " "),
+                       str_c("Neighbour:", `neighbours`, sep = " "),
+                       str_c("Total bases:", `total_bases`,sep = " "),
+                       sep = "<br/>"))
+
+# For Sankey Diagram annual users
+df1<-data%>%
+  select(user_type, idunplug_station, idplug_station)%>%
+  dplyr::filter(user_type==1)%>%
+  mutate(id=idunplug_station)%>%
+  group_by(id)%>%
+  left_join(bicimad_data)%>%
+  select(idunplug_station, idplug_station, neighbours)%>%
+  rename(neighbours_source=neighbours)
+df2<-data%>%
+  select(user_type, idplug_station, idunplug_station)%>%
+  dplyr::filter(user_type==1)%>%
+  mutate(id=idplug_station)%>%
+  group_by(id)%>%
+  left_join(bicimad_data)%>%
+  select(id, idplug_station, idunplug_station, neighbours)%>%
+  rename(neighbours_target=neighbours,
+         idplug_station2=idplug_station,
+         idunplug_station2=idunplug_station,
+         id2=id)
+
+
+df<-cbind.data.frame(df1,df2)
+
+df<-df%>%
+  select(idunplug_station, idplug_station, neighbours_source, neighbours_target)
+
+links<-df %>%
+  group_by(neighbours_source, neighbours_target)%>%
+  summarise(value=n())%>%
+  mutate(value=(value))%>%
+  arrange(neighbours_target)
+### sankey tab
+# From these flows we need to create a node data frame: it lists every entities involved in the flow
+nodes <- data.frame(name=c(as.character(links$neighbours_source), 
+                           as.character(links$neighbours_target)) %>% unique())
+
+# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
+links$IDsource=match(links$neighbours_source, nodes$name)-1 
+links$IDtarget=match(links$neighbours_target, nodes$name)-1
+
+# prepare colour scale
+ColourScal ='d3.scaleOrdinal() .range(["#FDE725FF","#B4DE2CFF","#6DCD59FF","#35B779FF","#1F9E89FF","#26828EFF","#31688EFF","#3E4A89FF"])'
+
+# sankey occasional users
+
+df3<-data%>%
+  select(user_type, idunplug_station, idplug_station)%>%
+  dplyr::filter(user_type==2)%>%
+  mutate(id=idunplug_station)%>%
+  group_by(id)%>%
+  left_join(bicimad_data)%>%
+  select(idunplug_station, idplug_station, neighbours)%>%
+  rename(neighbours_source=neighbours)
+df4<-data%>%
+  select(user_type, idplug_station, idunplug_station)%>%
+  dplyr::filter(user_type==2)%>%
+  mutate(id=idplug_station)%>%
+  group_by(id)%>%
+  left_join(bicimad_data)%>%
+  select(id, idplug_station, idunplug_station, neighbours)%>%
+  rename(neighbours_target=neighbours,
+         idplug_station2=idplug_station,
+         idunplug_station2=idunplug_station,
+         id2=id)
+
+dfbis<-cbind.data.frame(df3,df4)
+
+dfbis<-dfbis%>%
+  select(idunplug_station, idplug_station, neighbours_source, neighbours_target)
+
+linksbis<-dfbis %>%
+  group_by(neighbours_source, neighbours_target)%>%
+  summarise(value=n())%>%
+  mutate(value=(value))%>%
+  arrange(neighbours_target)
+### sankey tab
+# From these flows we need to create a node data frame: it lists every entities involved in the flow
+nodesbis <- data.frame(name=c(as.character(linksbis$neighbours_source), 
+                              as.character(linksbis$neighbours_target)) %>% unique())
+
+# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
+linksbis$IDsource=match(linksbis$neighbours_source, nodesbis$name)-1 
+linksbis$IDtarget=match(linksbis$neighbours_target, nodesbis$name)-1
+
+# prepare colour scale
+ColourScal ='d3.scaleOrdinal() .range(["#FDE725FF","#B4DE2CFF","#6DCD59FF","#35B779FF","#1F9E89FF","#26828EFF","#31688EFF","#3E4A89FF"])'
+
+
+###########################################################################################
+
+## daily use weekday 
+
+daily_use<-bicimad_abonos%>%
+  select(DIA, annual_membership_use, occas_membership_use, total_use, month, year, weekday)%>%
+  mutate(date=ymd(DIA),
+         month = factor(month, levels = c("janvier", "février", "mars",
+                                          "avril", "mai", "juin",
+                                          "juillet", "août",
+                                          "septembre", "octobre", "novembre",
+                                          "décembre")))
+
+datetime<-format(as.POSIXct(strptime(daily_use$date,"%Y-%m-%d")) ,format = "%Y-%m")
+daily_use$datetime<-datetime
+
+##Now, year by year
+
+sum_usos_year<-bicimad_abonos%>%
+  dplyr::filter(year!=2020)%>%
+  group_by(year)%>%
+  summarise("Annual users trips"=sum(annual_membership_use),
+            "Occasional users trips"=sum(occas_membership_use),
+            total_use=sum(total_use))
+#per weekday
+sum_usos_weekday<-bicimad_abonos%>%
+  group_by(weekday)%>%
+  summarise("Annual users trips"=sum(annual_membership_use),
+            "Occasional users trips"=sum(occas_membership_use),
+            total_use=sum(total_use))%>%
+  mutate(grouping=weekday,
+         grouping = factor(grouping, levels = c("lundi", "mardi",
+                                                "mercredi", "jeudi",
+                                                "vendredi", "samedi",
+                                                "dimanche")))
+#beginning of the app
+
+# Define UI ----
+ui <- navbarPage("BiciMAD APP",
+                 theme = shinytheme("flatly"),
+                 tabPanel("Welcome!",
+                          sidebarLayout(
+                            sidebarPanel(
+                              h3("Presentation of the project"),
+                              br(),
+                              h5("This is an unofficial application offering an interactive map and data 
+                                 on the BiciMAD bike sharing service located in Madrid. It is accessible to all individuals 
+                                 who wish to obtain information about the service, whether they are users or not."),
+                              br(),
+                              h5("The Map tab is an interactive map showing the location and traffic popularity of the 
+                                 different BiciMAD service stations. By clicking on the icons, you will get information about the stations."),
+                              br(),
+                              h5("The Data tab contains descriptive statistics on the service, as well as a map showing the concentration of the 
+                                 number of stations according to the chosen scale."),
+                              br(),
+                              h5("The Sankey Diagram tab contains two Sankey diagrams reflecting the travel habits of different users."),
+                              br(),
+                              h5("Finally, the More tab contains links for the reuse of R codes and also explain the 
+                                 context of the project creation.")
+                            ),
+                            mainPanel(
+                              img(src = "bicimad.png", height = 600, width = 900)
+                            )
+                          )
+                 ),
+                 
+                 tabPanel("Map",
+                          div(class="outer",
+                              tags$head(includeCSS("styles.css")),
+                              leafletOutput("map", width="100%", height="100%"),
+                              absolutePanel(id = "controls", class = "panel panel-default", fixed = TRUE,
+                                            draggable = TRUE, top = 70, left = "auto", right = 20, bottom = "auto",
+                                            width = 330, height = "auto",
+                                            
+                                            h2("BiciMAD Map"),
+                                            selectInput('choose', 'Choose a station:', choices = paste(bicimad_data$name,"-",bicimad_data$neighbours), selected = NULL),
+                                            checkboxInput("district", "Show neighbourhoods", FALSE),
+                                            h3("Most popular stations"),
+                                            sliderInput("range","Choose the total number of trips",
+                                                        min=min(bicimad_data$total_attendance),
+                                                        max=max(bicimad_data$total_attendance),
+                                                        value = c(min=min(bicimad_data$total_attendance),max(bicimad_data$total_attendance)))
+                              )
+                          )
+                 ),
+                 
+                 
+                 
+                 
+                 
+                 tabPanel("Data",
+                          navlistPanel(
+                            "Graphs constellation",
+                            tabPanel("BiciMAD Data",
+                                     h2("What is BiciMAD?"),
+                                     br(),
+                                     h4("BiciMAD is a bicycle sharing system in Madrid, Spain. 
+                                It is currently provided by the Empresa Municipal de Transportes de Madrid (EMT),
+                                a public company owned by the City Council of Madrid."),
+                                     br(),
+                                     h4("This rent service is aimed at all citizens and visitors to the city of Madrid, 
+                                   as an alternative element of clean transport that contributes to a more sustainable 
+                                   mobility model and the promotion of more balanced and healthy transport habits."),
+                                     br(),
+                                     h4("The following tabs present some statistics about the users of the service and their behavior.")
+                                     
+                            ),
+                            tabPanel("Annual users",
+                                     h4("Choose a period:"),
+                                     tabsetPanel(
+                                       tabPanel("Weekday",
+                                                br(),
+                                                plotOutput("use1")),
+                                       tabPanel("Month",
+                                                br(),
+                                                plotOutput("use2")),
+                                       tabPanel("Year",
+                                                br(),
+                                                plotOutput("use3"))
+                                     )
+                                     
+                                     
+                            ),
+                            
+                            tabPanel("Occasional users",
+                                     h4("Choose a period:"),
+                                     tabsetPanel(
+                                       tabPanel("Weekday",
+                                                br(),
+                                                plotOutput("use4")),
+                                       tabPanel("Month",
+                                                br(),
+                                                plotOutput("use5")),
+                                       tabPanel("Year",
+                                                br(),
+                                                plotOutput("use6"))
+                                     )
+                            ),
+                            
+                            tabPanel("Membership",
+                                     h4("These tables focuse on the number of new annual and occasional membership per month. Thus, it is 
+                               possible to look at the seasonnal effect affecting bike-sharing systems."),
+                                     br(),
+                                     plotOutput("sub1"),
+                                     plotOutput("sub2"),
+                                     br(),
+                                     h4("It is obvious that the number of subscriptions taken out per month is lower in winter. 
+                               There is also a return effect of subscribers after the Covid-19 crisis. We can wait for 
+                               new data and find out whether the crisis has given the service a new impetus.")),
+                            
+                            tabPanel("Cluster Map",
+                                     leafletOutput("map1", width = 900, height =600))
+                          )),
+                 
+                 
+                 tabPanel("Sankey Diagram",
+                          
+                          navlistPanel("The Sankey Diagram",
+                                       tabPanel("Annual subscribers flow",
+                                                h4("The following Sankey diagrams represents the origins and arrivals of the bikes 
+                                 by district from annual and occasional subscribers. By hovering the mouse over the links you
+                                 will be able to see the number of movements from the 
+                                 district of origin to the district of destination."),
+                                                sankeyNetworkOutput("sankey"),
+                                                hr(),
+                                                fluidRow(tableOutput("sankeytable"))
+                                       ),
+                                       tabPanel("Occasional subscribers flow",
+                                                br(),
+                                                sankeyNetworkOutput("sankey2")))
+                 ),
+                 tabPanel("Stations Table",
+                          DT::dataTableOutput("bicitable")),
+                 
+                 navbarMenu("More",
+                            tabPanel(HTML("</a></li><li><a href=\"https://github.com/AntoineAlazard/BiciMADApp\">Data and R codes")),
+                            tabPanel("About",
+                                     sidebarLayout(
+                                       sidebarPanel(
+                                         img(src = "ub.png", width = 400, height = 250),
+                                         img(src = "UAM.png", width = 400, height = 200)
+                                       ),
+                                       mainPanel(
+                                         h2("Context"),
+                                         br(),
+                                         h4("This application was realized by Antoine ALAZARD student in the DASEE Master degree from the University of Burgundy.
+                                     The context of this project was very special given the events related to Covid-19. It took place in telework in Dijon 
+                                     instead of the Autonomous University of Madrid. This application is the result of  the internship supervised by Coro Chasco Yrigoyen 
+                                        from the Autonomous University of Madrid."),
+                                         br(),
+                                         h4("The objective is that this application will be part of the eS-MiData project lead by the 
+                                        ENCONRES research group where Coro Chasco Yrigoyen is the director."),
+                                         br(),
+                                         h2("Code and Database"),
+                                         br(),
+                                         h4("The codes of this application are reusable and available on Github. A written report is also available. 
+                                        Moreover, due to the nature of the data, this application can be modified to keep it up to date.")
+                                       )
+                                     )
+                            )
+                 )
+)
+
+
+
+# Define server logic ----
+server <- function(input, output, session) {
+  
+  ## MAP
+  output$map <- renderLeaflet({
+    
+    bicimad_data %>%
+      leaflet() %>% 
+      setView(lng=-3.695440, lat = 40.42787, zoom = 13) %>%
+      addTiles() %>%
+      addAwesomeMarkers(lng= ~as.numeric(longitude), lat= ~as.numeric(latitude),
+                        icon = icons, label = ~name, popup = ~popup)%>%
+      addScaleBar(position = "bottomleft")
+    
+  })
+  
+  ## neighbourhood boundaries
+  observe({
+    proxy<-leafletProxy("map", data = bicimad_data)
+    proxy %>% clearShapes()
+    if (input$district) {
+      proxy %>% addPolygons(data=district)
+    }
+  })
+  
+  ## zoom when a station is selected
+  center <- reactive({
+    subset(bicimad_data, paste(bicimad_data$name,"-",bicimad_data$neighbours) == input$choose)
+  })
+  
+  observe(
+    leafletProxy("map") %>% 
+      setView(lng =  center()$longitude, lat = center()$latitude, zoom = 16)
+  ) 
+  
+  ## most popular stations
+  
+  filtered <- reactive({
+    bicimad_data[bicimad_data$total_attendance>=input$range[1] & 
+                   bicimad_data$total_attendance<=input$range[2], ]
+  })
+  
+  observe(leafletProxy("map", data = filtered())%>%
+            clearMarkers()%>%
+            addTiles() %>%
+            addAwesomeMarkers(lng= ~as.numeric(longitude), lat= ~as.numeric(latitude),
+                              icon = icons, label = ~name, popup = ~popup)
+  ) 
+  
+  
+  ###### DATA
+  
+  output$use1<-renderPlot({
+    ## per weekdays
+    
+    sum_usos_weekday%>%
+      gather(key = "Legend", value = "value", -weekday, -grouping, -"Occasional users trips", -total_use) %>%
+      ggplot(aes(x = as.factor(grouping), y = value, group = Legend)) + 
+      geom_line(aes(color = Legend), size = 1) +
+      geom_point(aes(color = Legend))+
+      scale_color_manual(values = c("#00AFBB")) +
+      theme_minimal() + ggtitle("Graph: Annual membership users attendance by weekdays") +
+      labs(x = "Weekday", y = "Trips") +
+      theme(axis.text.x = element_text(angle = 45))
+  })
+  
+  output$use4<-renderPlot({
+    
+    sum_usos_weekday%>%
+      gather(key = "Legend", value = "value", -weekday, -grouping, -"Annual users trips", -total_use) %>%
+      ggplot(aes(x = as.factor(grouping), y = value, group = Legend)) + 
+      geom_line(aes(color = Legend), size = 1) +
+      geom_point(aes(color = Legend))+
+      scale_color_manual(values = c("#E7B800")) +
+      theme_minimal() + ggtitle("Graph: Occasional membership users attendance by weekdays") +
+      labs(x = "Weekday", y = "Trips") +
+      theme(axis.text.x = element_text(angle = 45))
+  })
+  
+  output$use2<-renderPlot({
+    daily_use %>%
+      group_by(year, month, datetime)%>%
+      summarise("Annual users trips"=sum(annual_membership_use),
+                "Occasional users trips"=sum(occas_membership_use))%>%
+      select(datetime, "Annual users trips", "Occasional users trips")%>%
+      gather(key = "Legend", value = "value", -datetime, -"Occasional users trips", -month, -year) %>%
+      ggplot(aes(x = datetime, y = value, group = Legend)) + 
+      geom_line(aes(color = Legend), size = 1) + 
+      scale_color_manual(values = c("#DC143C")) +
+      theme_minimal() + ggtitle("Graph: Annual membership users attendance by months") +
+      labs(x = "Month", y = "Bicycle use") + theme(axis.text.x = element_text(angle=90))
+  })
+  output$use5<-renderPlot({
+    daily_use %>%
+      group_by(year, month, datetime)%>%
+      summarise("Annual users trips"=sum(annual_membership_use),
+                "Occasional users trips"=sum(occas_membership_use))%>%
+      select(datetime, "Annual users trips", "Occasional users trips")%>%
+      gather(key = "Legend", value = "value", -datetime, -"Annual users trips", -month, -year) %>%
+      ggplot(aes(x = datetime, y = value, group = Legend)) + 
+      geom_line(aes(color = Legend), size = 1) +
+      scale_color_manual(values = c("#E7B800")) +
+      theme_minimal() + ggtitle("Graph: Occasional membership users attendance by months") +
+      labs(x = "Month", y = "Bicycle use") + theme(axis.text.x = element_text(angle=90))
+  })
+  
+  output$use3<-renderPlot({
+    sum_usos_year%>%
+      gather(key = "Legend", value = "value", -year, -"Occasional users trips", -total_use) %>%
+      ggplot(aes(x = as.factor(year), y = value, group = Legend)) + 
+      geom_line(aes(color = Legend), size = 1) +
+      geom_point(aes(color = Legend))+
+      scale_color_manual(values = c("#00AFBB")) +
+      theme_minimal() + ggtitle("Graph: Annual membership users attendance by years") +
+      labs(x = "Year", y = "Trips") +
+      theme(axis.text.x = element_text(angle = 45))
+  })
+  
+  output$use6<-renderPlot({
+    sum_usos_year%>%
+      gather(key = "Legend", value = "value", -year, -"Annual users trips", -total_use) %>%
+      ggplot(aes(x = as.factor(year), y = value, group = Legend)) + 
+      geom_line(aes(color = Legend), size = 1) +
+      geom_point(aes(color = Legend))+
+      scale_color_manual(values = c("#00AFBB")) +
+      theme_minimal() + ggtitle("Graph: Occasional membership users attendance by years") +
+      labs(x = "Year", y = "Trips") +
+      theme(axis.text.x = element_text(angle = 45))
+  })
+  
+  
+  output$sub1<- renderPlot({
+    #annual subscribers
+    
+    #the target is too have the total for each month for each year
+    
+    bicimad_abonos%>%
+      mutate(month = factor(month, levels = c("janvier","février", "mars",
+                                              "avril", "mai", "juin",
+                                              "juillet", "août",
+                                              "septembre", "octobre", "novembre",
+                                              "décembre"))) %>%
+      group_by(year, month)%>%
+      summarise(total_membership_no_ptc=sum(membership_no_ptc),
+                total_membership_ptc=sum(membership_ptc),
+                "Total annual subscription"=sum(total_membership))%>%
+      mutate(day = 1)%>%
+      unite(Date,day, month, year, sep=" ")%>%
+      mutate(Date= dmy(Date))%>%
+      gather(key = "Legend", value = "value", -Date,-total_membership_no_ptc,-total_membership_ptc) %>%
+      ggplot(aes(x = Date, y = value)) + 
+      geom_line(aes(color = Legend), size = 1) +
+      scale_color_manual(values = c("#00AFBB", "#E7B800","#DC143C")) +
+      theme_minimal() + ggtitle("Registration of new active annual users per month") +
+      labs(x = "Year", y = "New annual memberships")
+  })
+  
+  output$sub2<- renderPlot({
+    ##ocasional subscribers
+    
+    ##month by month
+    
+    bicimad_abonos%>%
+      mutate(month = factor(month, levels = c("janvier", "février", "mars",
+                                              "avril", "mai", "juin",
+                                              "juillet", "août",
+                                              "septembre", "octobre", "novembre",
+                                              "décembre"))) %>%
+      group_by(year, month)%>%
+      summarise("1 day subscription"=sum(membership_1day),
+                "3 days subscription"=sum(membership_3days),
+                "5 days subscription"=sum(membership_5days),
+                "Total occasional subscription"=sum(membership_occas_total))%>%
+      mutate(day = 1)%>%
+      unite(Date,day, month, year, sep=" ")%>%
+      mutate(Date= dmy(Date))%>%
+      gather(key = "Legend", value = "value", -Date) %>%
+      ggplot(aes(x = Date, y = value)) + 
+      geom_line(aes(color = Legend), size = 1) +
+      scale_color_manual(values = c("#00AFBB", "#E7B800","#DC143C","#228B22")) +
+      theme_minimal() + ggtitle("Registration of new occasional subscribers users per months") +
+      labs(x = "Year", y = "New ocasional membership")+
+      scale_x_date(breaks = date_breaks("months"),labels = date_format("%m/%Y")) +
+      theme(axis.text.x = element_text(angle=90))
+  })
+  
+  ## Cluster map
+  output$map1<- renderLeaflet({
+    bicimad_data %>%
+      leaflet() %>%
+      addTiles() %>%
+      setView(lng=-3.70256, lat = 40.4165, zoom=13)%>%
+      addCircleMarkers(lng = ~as.numeric(longitude), lat = ~as.numeric(latitude), fillOpacity = 0.5,
+                       radius = 4, clusterOptions = markerClusterOptions())%>%
+      addScaleBar(position = "bottomleft")
+  })
+  
+  output$bicitable <- DT::renderDataTable({
+    bicimad_data%>%
+      select(name, number, address, neighbours, total_bases, -X.1, -X, -field_1)
+  })
+  
+  ## The Sankey Diagram
+  output$sankeytable<- renderTable({
+    
+    links%>%
+      rename(Neighbourhoods=neighbours_source)%>%
+      group_by(Neighbourhoods)%>%
+      summarise(Total_trip=sum(value))%>%
+      arrange(desc(Total_trip))%>%
+      gt()%>%
+      tab_header(
+        title = md("Table: Sankey diagram"))%>%
+      tab_source_note(md("Source: EMT de Madrid"))
+  })
+  
+  output$sankey <-renderSankeyNetwork({
+    sankeyNetwork(Links = links, Nodes = nodes,
+                  Source = "IDsource", Target = "IDtarget",
+                  Value = "value", NodeID = "name", 
+                  sinksRight=FALSE, colourScale=ColourScal, 
+                  nodeWidth=20, fontSize=15, nodePadding=80)
+    
+  })
+  
+  output$sankey2<-renderSankeyNetwork({
+    sankeyNetwork(Links = linksbis, Nodes = nodesbis,
+                  Source = "IDsource", Target = "IDtarget",
+                  Value = "value", NodeID = "name", 
+                  sinksRight=FALSE, colourScale=ColourScal, 
+                  nodeWidth=20, fontSize=15, nodePadding=80)
+  })
+  
+}
+
+# Run the app ----
+shinyApp(ui = ui, server=server)
+         

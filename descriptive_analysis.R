@@ -78,6 +78,16 @@ data%>%
     title = md("Table 2: Movements per age range"))%>%
   tab_source_note(md("Source: EMT de Madrid"))
 
+data%>%
+  filter(user_type!=3)%>%
+  group_by(ageRange)%>%
+  summarise(Total=n())%>%
+  mutate(Percent = Total / sum(Total)*100)%>%
+  gt()%>%
+  tab_header(
+    title = md("Table 2: Movements per age range"))%>%
+  tab_source_note(md("Source: EMT de Madrid"))
+
 ## about travel_time
 
 data%>%
@@ -104,7 +114,7 @@ data%>%
 # movements per month 
 data%>%
   filter(user_type!=3)%>%
-  mutate(month = factor(month, levels = c("décembre", "février", "mars",
+  mutate(month = factor(month, levels = c("dÃ©cembre", "fÃ©vrier", "mars",
                                    "avril", "juin"))) %>%
   group_by(user_type, month)%>%
   summarise(Total=n())%>%
@@ -261,11 +271,11 @@ grid.arrange(plot5, plot6, plot7, plot8, ncol=2)
 daily_use<-bicimad_abonos%>%
   select(DIA, annual_membership_use, occas_membership_use, total_use, month, year, weekday)%>%
   mutate(date=ymd(DIA),
-         month = factor(month, levels = c("janvier", "février", "mars",
+         month = factor(month, levels = c("janvier", "fÃ©vrier", "mars",
                                                  "avril", "mai", "juin",
-                                                 "juillet", "août",
+                                                 "juillet", "aoÃ»t",
                                                  "septembre", "octobre", "novembre",
-                                                 "décembre")))
+                                                 "dÃ©cembre")))
 
 datetime<-format(as.POSIXct(strptime(daily_use$date,"%Y-%m-%d")) ,format = "%Y-%m")
 daily_use$datetime<-datetime
@@ -434,11 +444,11 @@ bicimad_abonos<-read.csv("C:/Users/aalaz/Desktop/Internship_data/database_create
 
 #the target is too have the total for each month for each year
 bicimad_abonos%>%
-  mutate(month = factor(month, levels = c("janvier", "février", "mars",
+  mutate(month = factor(month, levels = c("janvier", "fÃ©vrier", "mars",
                                           "avril", "mai", "juin",
-                                          "juillet", "août",
+                                          "juillet", "aoÃ»t",
                                           "septembre", "octobre", "novembre",
-                                          "décembre"))) %>%
+                                          "dÃ©cembre"))) %>%
   group_by(year, month)%>%
   summarise(total_membership_no_ptc=sum(membership_no_ptc),
             total_membership_ptc=sum(membership_ptc),
@@ -466,11 +476,11 @@ sum_abonos_by_year<-bicimad_abonos%>%
 
 ##month by month
 sum_ocas_by_month<-bicimad_abonos%>%
-  mutate(month = factor(month, levels = c("janvier", "février", "mars",
+  mutate(month = factor(month, levels = c("janvier", "fÃ©vrier", "mars",
                                           "avril", "mai", "juin",
-                                          "juillet", "août",
+                                          "juillet", "aoÃ»t",
                                           "septembre", "octobre", "novembre",
-                                          "décembre"))) %>%
+                                          "dÃ©cembre"))) %>%
   group_by(year, month)%>%
   summarise("1 day subscription"=sum(membership_1day),
             "3 days subscription"=sum(membership_3days),
@@ -576,3 +586,73 @@ sum_usos_weekday2%>%
   theme_minimal() + ggtitle("Graph: Number of trips per weekdays (occasional users)") +
   labs(x = "Weekday", y = "Trips") +
   theme(axis.text.x = element_text(angle = 45))
+
+
+daily_use %>%
+  group_by(year, month, datetime)%>%
+  summarise("Annual users trips"=sum(annual_membership_use),
+            "Occasional users trips"=sum(occas_membership_use))%>%
+  select(datetime, "Annual users trips", "Occasional users trips")%>%
+  gather(key = "Legend", value = "value", -datetime, -"Occasional users trips", -month, -year) %>%
+  ggplot(aes(x = datetime, y = value, group = Legend)) + 
+  geom_line(aes(color = Legend), size = 1) + 
+  scale_color_manual(values = c("#DC143C")) +
+  theme_minimal() + ggtitle("Graph 11: Annual membership users attendance by months") +
+  labs(x = "Month", y = "Bicycle use") + theme(axis.text.x = element_text(angle=90))
+b<-sum_usos_weekday%>%
+  gather(key = "Legend", value = "value", -weekday, -grouping, -"Occasional users trips", -total_use) %>%
+  ggplot(aes(x = as.factor(grouping), y = value, group = Legend)) + 
+  geom_line(aes(color = Legend), size = 1) +
+  geom_point(aes(color = Legend))+
+  scale_color_manual(values = c("#00AFBB")) +
+  theme_minimal() + ggtitle("Graph 12: Annual membership users attendance by weekdays") +
+  labs(x = "Weekday", y = "Trips") +
+  theme(axis.text.x = element_text(angle = 45))
+c<-sum_usos_year%>%
+  gather(key = "Legend", value = "value", -year, -"Occasional users trips", -total_use) %>%
+  ggplot(aes(x = as.factor(year), y = value, group = Legend)) + 
+  geom_line(aes(color = Legend), size = 1) +
+  geom_point(aes(color = Legend))+
+  scale_color_manual(values = c("#00AFBB")) +
+  theme_minimal() + ggtitle("Graph 13: Annual membership users attendance by years") +
+  labs(x = "Year", y = "Trips") +
+  theme(axis.text.x = element_text(angle = 45))
+
+
+grid.arrange(b,c,nrow=2)
+
+
+
+
+
+daily_use %>%
+  group_by(year, month, datetime)%>%
+  summarise("Annual users trips"=sum(annual_membership_use),
+            "Occasional users trips"=sum(occas_membership_use))%>%
+  select(datetime, "Annual users trips", "Occasional users trips")%>%
+  gather(key = "Legend", value = "value", -datetime, -"Annual users trips", -month, -year) %>%
+  ggplot(aes(x = datetime, y = value, group = Legend)) + 
+  geom_line(aes(color = Legend), size = 1) +
+  scale_color_manual(values = c("#E7B800")) +
+  theme_minimal() + ggtitle("Graph 14: Occasional membership users attendance by months") +
+  labs(x = "Month", y = "Bicycle use") + theme(axis.text.x = element_text(angle=90))
+d<-sum_usos_weekday%>%
+  gather(key = "Legend", value = "value", -weekday, -grouping, -"Annual users trips", -total_use) %>%
+  ggplot(aes(x = as.factor(grouping), y = value, group = Legend)) + 
+  geom_line(aes(color = Legend), size = 1) +
+  geom_point(aes(color = Legend))+
+  scale_color_manual(values = c("#E7B800")) +
+  theme_minimal() + ggtitle("Graph 15: Occasional membership users attendance by weekdays") +
+  labs(x = "Weekday", y = "Trips") +
+  theme(axis.text.x = element_text(angle = 45))
+e<-sum_usos_year%>%
+  gather(key = "Legend", value = "value", -year, -"Annual users trips", -total_use) %>%
+  ggplot(aes(x = as.factor(year), y = value, group = Legend)) + 
+  geom_line(aes(color = Legend), size = 1) +
+  geom_point(aes(color = Legend))+
+  scale_color_manual(values = c("#00AFBB")) +
+  theme_minimal() + ggtitle("Graph 16: Occasional membership users attendance by years") +
+  labs(x = "Year", y = "Trips") +
+  theme(axis.text.x = element_text(angle = 45))
+
+grid.arrange(d,e, nrow=2)
